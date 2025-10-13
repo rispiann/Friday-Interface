@@ -18,18 +18,10 @@ const WELCOME_MESSAGES = [
   "Ingin integrasi API? Aku siap dipanggil lewat backend.",
 ];
 
-const BOT_RESPONSES: Record<string, string> = {
-  "show me demo": "Ini demo interaktif! Saya bisa merespons berbagai perintah. Coba tanya tentang cuaca, waktu, atau apa saja!",
-  "cuaca": "Cuaca hari ini cerah dengan suhu 28°C. Perfect untuk aktivitas outdoor! ☀️",
-  "waktu": `Sekarang pukul ${new Date().toLocaleTimeString('id-ID')}`,
-  "halo": "Halo! Ada yang bisa saya bantu?",
-  "terima kasih": "Sama-sama! Senang bisa membantu 😊",
-};
-
 const getTimestamp = () => {
-  return new Date().toLocaleTimeString('id-ID', { 
-    hour: '2-digit', 
-    minute: '2-digit' 
+  return new Date().toLocaleTimeString("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
   });
 };
 
@@ -49,6 +41,7 @@ const Index = () => {
     scrollToBottom();
   }, [messages, isTyping]);
 
+  // ✉️ Fungsi kirim pesan ke backend Flask
   const handleSendMessage = (text: string) => {
     const userMessage: Message = {
       id: Date.now(),
@@ -60,37 +53,46 @@ const Index = () => {
     setMessages((prev) => [...prev, userMessage]);
     setIsTyping(true);
 
-    // Simulate bot response
-    setTimeout(() => {
-      const lowerText = text.toLowerCase();
-      let botResponse = BOT_RESPONSES[lowerText];
-      
-      if (!botResponse) {
-        // Default response
-        botResponse = `Anda berkata: "${text}". Saya masih belajar untuk merespons lebih baik!`;
+    setTimeout(async () => {
+      try {
+        const res = await fetch("http://localhost:5000/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+
+        const data = await res.json();
+        const botMessage: Message = {
+          id: Date.now() + 1,
+          text: data.reply,
+          isBot: true,
+          timestamp: getTimestamp(),
+        };
+
+        setMessages((prev) => [...prev, botMessage]);
+      } catch (err) {
+        const botMessage: Message = {
+          id: Date.now() + 1,
+          text: "⚠️ Server tidak merespons. Pastikan backend Friday aktif.",
+          isBot: true,
+          timestamp: getTimestamp(),
+        };
+        setMessages((prev) => [...prev, botMessage]);
+      } finally {
+        setIsTyping(false);
       }
-
-      const botMessage: Message = {
-        id: Date.now() + 1,
-        text: botResponse,
-        isBot: true,
-        timestamp: getTimestamp(),
-      };
-
-      setMessages((prev) => [...prev, botMessage]);
-      setIsTyping(false);
-    }, 1000 + Math.random() * 1000);
+    }, 800);
   };
 
+  // 🧱 Bagian UI Chatbot (return harus di luar handleSendMessage)
   return (
     <div className="relative min-h-screen overflow-hidden">
       <ParticleBackground />
-      
+
       <div className="relative z-10 flex items-center justify-center min-h-screen p-4 md:p-6">
         <div className="w-full max-w-6xl h-[90vh] max-h-[900px] grid md:grid-cols-[360px_1fr] gap-4 md:gap-6">
           {/* Left Sidebar */}
           <div className="hidden md:flex flex-col gap-4 p-6 rounded-3xl bg-card/40 backdrop-blur-xl border border-glass-border shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
-            {/* Avatar Orb */}
             <div className="flex flex-col items-center gap-4">
               <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 via-accent/10 to-secondary/20 flex items-center justify-center shadow-[0_6px_26px_rgba(58,28,113,0.28)] animate-float border border-primary/30">
                 <Bot className="w-10 h-10 text-primary" />
@@ -106,7 +108,6 @@ const Index = () => {
               </div>
             </div>
 
-            {/* Features */}
             <div className="flex-1 mt-6">
               <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" />
@@ -129,7 +130,6 @@ const Index = () => {
               </div>
             </div>
 
-            {/* Status */}
             <div className="p-4 rounded-xl bg-primary/10 border border-primary/30">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
@@ -140,7 +140,6 @@ const Index = () => {
 
           {/* Main Chat Area */}
           <div className="flex flex-col rounded-3xl bg-card/40 backdrop-blur-xl border border-glass-border shadow-[0_8px_30px_rgba(0,0,0,0.6)] overflow-hidden">
-            {/* Chat Header */}
             <div className="p-4 md:p-6 border-b border-glass-border bg-gradient-to-r from-card/50 to-card/30 backdrop-blur-md">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center border border-primary/30">
@@ -157,7 +156,6 @@ const Index = () => {
               </div>
             </div>
 
-            {/* Messages Container */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
               {messages.map((message) => (
                 <ChatMessage
@@ -171,7 +169,6 @@ const Index = () => {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Area */}
             <div className="p-4 md:p-6 border-t border-glass-border bg-gradient-to-r from-card/50 to-card/30 backdrop-blur-md">
               <ChatInput onSend={handleSendMessage} disabled={isTyping} />
             </div>
