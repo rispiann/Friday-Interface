@@ -175,7 +175,7 @@ User: {prompt}
 Friday:"""
 
         if genai is None or GEMINI_KEY is None:
-            return "⚠️ Gemini API belum dikonfigurasi dengan benar."
+            return "Gemini API belum dikonfigurasi dengan benar."
 
         model = genai.GenerativeModel("models/gemini-2.5-flash")
 

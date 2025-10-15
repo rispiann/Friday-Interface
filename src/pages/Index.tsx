@@ -15,7 +15,6 @@ interface Message {
 const WELCOME_MESSAGES = [
   "Halo! Aku Friday, asisten futuristikmu. Mau coba fitur apa hari ini?",
   "Coba ketik: 'show me demo' atau 'cuaca' untuk melihat fitur.",
-  "Ingin integrasi API? Aku siap dipanggil lewat backend.",
 ];
 
 const getTimestamp = () => {
@@ -103,7 +102,7 @@ const Index = () => {
                   Friday AI
                 </h2>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Asisten Futuristik Anda
+                  Assistant Anda
                 </p>
               </div>
             </div>
@@ -117,8 +116,6 @@ const Index = () => {
                 {[
                   "Chat Interaktif",
                   "Respons Real-time",
-                  "Antarmuka Futuristik",
-                  "Animasi Halus",
                 ].map((feature, idx) => (
                   <div
                     key={idx}
@@ -150,7 +147,7 @@ const Index = () => {
                     Friday Chatbot
                   </h1>
                   <p className="text-xs text-muted-foreground">
-                    Siap membantu Anda 24/7
+                    Siap Membantu 
                   </p>
                 </div>
               </div>
