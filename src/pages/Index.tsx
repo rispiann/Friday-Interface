@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { ParticleBackground } from "@/components/ParticleBackground";
 import { ChatMessage } from "@/components/ChatMessage";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { ChatInput } from "@/components/ChatInput";
+import { ParticleBackground } from "@/components/ParticleBackground";
 import { Bot, Sparkles } from "lucide-react";
 
 interface Message {
@@ -91,7 +91,7 @@ const Index = () => {
       <div className="relative z-10 flex items-center justify-center min-h-screen p-4 md:p-6">
         <div className="w-full max-w-6xl h-[90vh] max-h-[900px] grid md:grid-cols-[360px_1fr] gap-4 md:gap-6">
           {/* Left Sidebar */}
-          <div className="hidden md:flex flex-col gap-4 p-6 rounded-3xl bg-card/40 backdrop-blur-xl border border-glass-border shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
+          <div className="hidden md:flex flex-col gap-4 p-6 rounded-3xl bg-card/20 border border-glass-border shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
             <div className="flex flex-col items-center gap-4">
               <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 via-accent/10 to-secondary/20 flex items-center justify-center shadow-[0_6px_26px_rgba(58,28,113,0.28)] animate-float border border-primary/30">
                 <Bot className="w-10 h-10 text-primary" />
@@ -136,7 +136,7 @@ const Index = () => {
           </div>
 
           {/* Main Chat Area */}
-          <div className="flex flex-col rounded-3xl bg-card/40 backdrop-blur-xl border border-glass-border shadow-[0_8px_30px_rgba(0,0,0,0.6)] overflow-hidden">
+          <div className="flex flex-col rounded-3xl bg-card/20 border border-glass-border shadow-[0_8px_30px_rgba(0,0,0,0.6)] overflow-hidden">
             <div className="p-4 md:p-6 border-b border-glass-border bg-gradient-to-r from-card/50 to-card/30 backdrop-blur-md">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center border border-primary/30">
@@ -147,7 +147,7 @@ const Index = () => {
                     Friday Chatbot
                   </h1>
                   <p className="text-xs text-muted-foreground">
-                    Siap Membantu 
+                    Siap Membantu
                   </p>
                 </div>
               </div>
