@@ -4,17 +4,13 @@ import webbrowser
 import datetime
 import speech_recognition as sr
 from dotenv import load_dotenv
-import os
-os.environ["GOOGLE_API_USE_REST"] = "true"  
-try:
-    import google.generativeai as genai
-except Exception:
-    genai = None
+import time
+import re
+import json
+import requests  # Pastikan requests diimpor di atas
 from gtts import gTTS
 from playsound import playsound
 import tempfile
-import time
-import re
 from plyer import notification
 import pyautogui
 import threading
@@ -26,21 +22,17 @@ try:
     from chromadb.utils import embedding_functions
 except Exception:
     chromadb = None
-import requests
 import schedule
 import cv2
 import numpy as np
 from PIL import Image
 import pytesseract
-import json
 
 load_dotenv()
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-if genai and GEMINI_KEY:
-    try:
-        genai.configure(api_key=GEMINI_KEY)
-    except Exception as e:
-        print("Gemini config error:", e)
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME")
 
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
@@ -75,15 +67,19 @@ if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_URI:
         sp = None
 
 memory = None
-if chromadb:
+if chromadb and OPENROUTER_API_KEY: # Periksa kunci OpenRouter
     try:
         chroma_client = chromadb.Client()
         memory = chroma_client.create_collection(name="friday_memory")
+        # Fungsi embedding OpenAI bisa diarahkan ke OpenRouter
         embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=GEMINI_KEY,
-            model_name="text-embedding-004"
-        )
-    except Exception:
+            api_key=OPENROUTER_API_KEY,
+            api_base="https://openrouter.ai/api/v1", # Arahkan ke endpoint OpenRouter
+            model_name="text-embedding-ada-002" # Model embedding yang umum
+         )
+        # memory.embedding_function = embedding_fn # Beberapa versi chromadb mungkin butuh ini
+    except Exception as e:
+        print(f"ChromaDB/Memory init error: {e}")
         memory = None
 
 def save_memory(role, text):
@@ -105,7 +101,7 @@ def recall_memory(query):
 # Face Recognition Settings
 privacy_mode = False
 face_monitor_enabled = True
-require_face_on_startup = False  # Set to True to enable face auth on startup
+require_face_on_startup = False  #
 allow_face_toggle = True
 
 FACES_DIR = "faces"
@@ -161,32 +157,66 @@ def listen(timeout=None, phrase_time_limit=8):
         speak("Sorry sir, we have problem with the internet")
         return ""
 
-def ask_gemini(prompt):
+def ask_openrouter(prompt):
+    """
+    Fungsi ini berkomunikasi dengan OpenRouter API dan menghasilkan (yield)
+    setiap potongan teks yang diterima secara streaming.
+    """
+    if not OPENROUTER_API_KEY:
+        yield "OpenRouter API key belum dikonfigurasi."
+        return
+
     try:
         context = recall_memory(prompt)
-        full_prompt = f"""
-Anda adalah Friday, asisten AI futuristik yang cerdas, ramah, dan sopan.
-Gunakan gaya bicara hangat tapi profesional.
+        messages = [
+            {"role": "system", "content": f"Anda adalah Friday, asisten AI futuristik yang cerdas, ramah, dan sopan. Konteks percakapan sebelumnya: {context}"},
+            {"role": "user", "content": prompt}
+        ]
 
-Konteks percakapan sebelumnya:
-{context}
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer": OPENROUTER_SITE_URL or "",
+                "X-Title": OPENROUTER_APP_NAME or "",
+            },
+            json={
+                "model": "anthropic/claude-haiku-4.5", 
+                "messages": messages,
+                "stream": True
+            },
+            stream=True
+         )
+        response.raise_for_status()
 
-User: {prompt}
-Friday:"""
-
-        if genai is None or GEMINI_KEY is None:
-            return "Gemini API belum dikonfigurasi dengan benar."
-
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
-
-        response = model.generate_content(full_prompt)
         save_memory("user", prompt)
-        save_memory("friday", response.text)
-        return response.text
+        full_bot_response = ""
 
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                if decoded_line.startswith('data: '):
+                    content = decoded_line[6:]
+                    if content.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk_json = json.loads(content)
+                        chunk_text = chunk_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if chunk_text:
+                            yield chunk_text
+                            full_bot_response += chunk_text
+                    except json.JSONDecodeError:
+                        pass
+        
+        if full_bot_response:
+            save_memory("friday", full_bot_response.strip())
+
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred: {http_err} - {response.text}" )
+        yield f"Maaf, terjadi kesalahan saat menghubungi OpenRouter: {response.status_code}"
     except Exception as e:
-        print("Gemini error:", e)
-        return f"Maaf, Friday gagal memproses permintaan AI. ({e})"
+        print(f"An error occurred in ask_openrouter: {e}")
+        yield "Maaf, terjadi kesalahan internal saat memproses permintaan AI."
 
 
 def notify(title, message):
@@ -313,33 +343,28 @@ def schedule_weather():
 
 def friday_response(message: str):
     """
-    Friday AI smart response — otomatis gunakan Gemini jika tersedia.
+    Fungsi ini sekarang selalu mengembalikan sebuah generator.
     """
     try:
-        # 🧩 Jika Gemini aktif dan key tersedia
-        if genai and GEMINI_KEY:
-            print("[Friday AI] Using Gemini for:", message)
-            reply = ask_gemini(message)
-            if reply:
-                return reply
+        # Periksa apakah OpenRouter harus digunakan
+        if OPENROUTER_API_KEY:
+            print("[Friday AI] Using OpenRouter for:", message)
+            return ask_openrouter(message)
 
-        # 🧩 Jika tidak ada Gemini, fallback ke logic biasa
-        msg_lower = message.lower()
-        if "halo" in msg_lower:
-            return "Halo! Aku Friday, asisten AI futuristikmu 🚀"
-        elif "cuaca" in msg_lower:
-            return "Untuk info cuaca, aku bisa bantu kalau sudah aktifkan API cuaca ☁️"
-        elif "demo" in msg_lower:
-            return "Kamu sedang menggunakan mode demo interaktif 💡"
-        elif "waktu" in msg_lower:
-            now = datetime.datetime.now().strftime("%H:%M")
-            return f"Sekarang pukul {now}, seperti biasa aku selalu siaga ⏰"
-        else:
-            return f"Saya mendengar: '{message}', tapi AI-ku sedang offline."
+        # Logika Fallback jika OpenRouter tidak dikonfigurasi
+        def fallback_generator():
+            reply = f"Saya mendengar: '{message}', tapi AI-ku sedang offline karena OpenRouter key tidak tersedia."
+            words = reply.split(' ')
+            for word in words:
+                yield word + ' '
+                time.sleep(0.05)
+        return fallback_generator()
+
     except Exception as e:
         print("Error in friday_response:", e)
-        return f"⚠️ Terjadi error di Friday: {e}"
-
+        def error_generator():
+            yield f"⚠️ Terjadi error di Friday: {e}"
+        return error_generator()
 
 
 def capture_face_samples(user_name):
@@ -643,8 +668,9 @@ def handle_command(command):
     
     else:
         if command.strip() != "":
-            reply = ask_gemini(command)
-            speak(reply)
+            responses_generator = friday_response(command)
+            full_reply = "".join(list(responses_generator))
+            speak(full_reply)
         else:
             speak("I didn't catch that, sir. Could you repeat?")
     

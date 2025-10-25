@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response, stream_with_context
 from flask_cors import CORS
 from fr import friday_response
 
@@ -9,8 +9,10 @@ CORS(app)
 def chat():
     data = request.get_json()
     user_message = data.get("message", "")
-    response = friday_response(user_message)
-    return jsonify({"reply": response})
+    
+    response_generator = friday_response(user_message)
+    
+    return Response(stream_with_context(response_generator), mimetype="text/plain")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

@@ -3,7 +3,7 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { ChatInput } from "@/components/ChatInput";
 import { ParticleBackground } from "@/components/ParticleBackground";
-import { Bot, Sparkles } from "lucide-react";
+import { Bot, Sparkles, Trash2 } from "lucide-react";
 
 interface Message {
   id: number;
@@ -25,10 +25,27 @@ const getTimestamp = () => {
 };
 
 const Index = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 1, text: WELCOME_MESSAGES[0], isBot: true, timestamp: getTimestamp() },
-    { id: 2, text: WELCOME_MESSAGES[1], isBot: true, timestamp: getTimestamp() },
-  ]);
+  const loadInitialMessages = (): Message[] => {
+    try {
+      const savedMessages = localStorage.getItem("friday_chat_history");
+      if (savedMessages) {
+        return JSON.parse(savedMessages); // Kembalikan riwayat yang tersimpan
+      }
+    } catch (error) {
+      console.error("Gagal memuat riwayat chat dari localStorage:", error);
+      // Jika terjadi error (misalnya, data korup), hapus data yang salah
+      localStorage.removeItem("friday_chat_history");
+    }
+
+    return [
+      { id: 1, text: WELCOME_MESSAGES[0], isBot: true, timestamp: getTimestamp() },
+      { id: 2, text: WELCOME_MESSAGES[1], isBot: true, timestamp: getTimestamp() },
+    ];
+  };
+
+  const [messages, setMessages] = useState<Message[]>(loadInitialMessages);
+
+
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -40,48 +57,84 @@ const Index = () => {
     scrollToBottom();
   }, [messages, isTyping]);
 
+  useEffect(() => {
+    if (!isTyping && messages.length > 2) {
+      try {
+        localStorage.setItem("friday_chat_history", JSON.stringify(messages));
+        console.log("Riwayat obrolan berhasil disimpan.");
+      } catch (error) {
+        console.error("Gagal menyimpan riwayat chat ke localStorage:", error);
+      }
+    }
+  }, [messages, isTyping]);
+
   // ✉️ Fungsi kirim pesan ke backend Flask
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
+    // 1. Tambahkan pesan pengguna ke UI
     const userMessage: Message = {
       id: Date.now(),
       text,
       isBot: false,
       timestamp: getTimestamp(),
     };
-
     setMessages((prev) => [...prev, userMessage]);
+
+    // 2. Tampilkan indikator "sedang mengetik"
     setIsTyping(true);
 
-    setTimeout(async () => {
-      try {
-        const res = await fetch("http://localhost:5000/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text }),
-        });
+    try {
+      const response = await fetch("http://localhost:5000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
 
-        const data = await res.json();
-        const botMessage: Message = {
-          id: Date.now() + 1,
-          text: data.reply,
-          isBot: true,
-          timestamp: getTimestamp(),
-        };
-
-        setMessages((prev) => [...prev, botMessage]);
-      } catch (err) {
-        const botMessage: Message = {
-          id: Date.now() + 1,
-          text: "⚠️ Server tidak merespons. Pastikan backend Friday aktif.",
-          isBot: true,
-          timestamp: getTimestamp(),
-        };
-        setMessages((prev) => [...prev, botMessage]);
-      } finally {
-        setIsTyping(false);
+      if (!response.body) {
+        throw new Error("Response body tidak ada.");
       }
-    }, 800);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let done = false;
+      let fullReply = ""; // Variabel untuk mengumpulkan seluruh teks
+
+      // 3. Baca seluruh stream di belakang layar
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        const chunk = decoder.decode(value, { stream: true });
+        if (chunk) {
+          fullReply += chunk; // Tambahkan setiap potongan ke variabel
+        }
+      }
+
+      // 4. Setelah stream selesai, buat pesan bot yang sudah lengkap
+      if (fullReply) {
+        const botMessage: Message = {
+          id: Date.now() + 1,
+          text: fullReply.trim(), // Gunakan teks yang sudah terkumpul
+          isBot: true,
+          timestamp: getTimestamp(),
+        };
+        // Tambahkan pesan bot yang sudah jadi ke UI
+        setMessages((prev) => [...prev, botMessage]);
+      }
+
+    } catch (error) {
+      console.error("Gagal memproses respons dari server:", error);
+      const errorMessage: Message = {
+        id: Date.now() + 1,
+        text: "⚠️ Maaf, terjadi kesalahan saat menghubungi server.",
+        isBot: true,
+        timestamp: getTimestamp(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      // 5. Sembunyikan indikator "sedang mengetik"
+      setIsTyping(false);
+    }
   };
+
 
   // 🧱 Bagian UI Chatbot (return harus di luar handleSendMessage)
   return (
@@ -116,6 +169,7 @@ const Index = () => {
                 {[
                   "Chat Interaktif",
                   "Respons Real-time",
+                  "Terintegrasi dengan Gemini",
                 ].map((feature, idx) => (
                   <div
                     key={idx}
@@ -147,7 +201,7 @@ const Index = () => {
                     Friday Chatbot
                   </h1>
                   <p className="text-xs text-muted-foreground">
-                    Siap Membantu
+                    Powered by Gemini
                   </p>
                 </div>
               </div>
