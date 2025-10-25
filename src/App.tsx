@@ -1,27 +1,33 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+// src/App.tsx
+
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
+import LoginPage from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/ProtectedRoute"; // <-- 1. Impor komponen penjaga
 
-const queryClient = new QueryClient();
+// ... (kode lainnya)
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+  // ... (provider lainnya)
+  <BrowserRouter>
+    <Routes>
+      {/* Rute Login dan publik lainnya */}
+      <Route path="/login" element={<LoginPage />} />
+
+      {/* --- RUTE YANG DILINDUNGI --- */}
+      <Route element={<ProtectedRoute />}>
+        {/* Semua rute di dalam sini hanya bisa diakses setelah login */}
+        <Route path="/" element={<Index />} />
+        {/* Anda bisa menambahkan rute lain yang butuh login di sini, contoh: */}
+        {/* <Route path="/profile" element={<ProfilePage />} /> */}
+      </Route>
+
+      {/* Rute catch-all untuk halaman tidak ditemukan */}
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  </BrowserRouter>
+  // ... (provider lainnya)
 );
 
 export default App;
