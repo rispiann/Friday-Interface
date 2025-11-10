@@ -1,102 +1,103 @@
-import { useEffect, useRef, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useCallback } from 'react';
 import { Camera, Loader2, UserCheck, UserX } from 'lucide-react';
 
-const FaceLogin = () => {
+// 1. Definisikan props baru yang akan diterima komponen
+interface FaceLoginProps {
+  onLoginSuccess: (token: string) => void;
+}
+
+// 2. Terima props tersebut di dalam komponen
+const FaceLogin = ({ onLoginSuccess }: FaceLoginProps) => {
+  const [status, setStatus] = useState<'idle' | 'scanning' | 'success' | 'error' | 'not_found'>('idle');
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const socketRef = useRef<Socket | null>(null);
-  const [status, setStatus] = useState('Menunggu...');
-  const [isRecognizing, setIsRecognizing] = useState(false);
-  const navigate = useNavigate();
+  const streamRef = useRef<MediaStream | null>(null);
 
-  useEffect(() => {
-    // Terhubung ke WebSocket saat komponen dimuat
-    socketRef.current = io('http://localhost:5000' );
-    const socket = socketRef.current;
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
 
-    socket.on('connect', () => setStatus('Terhubung. Arahkan wajah ke kamera.'));
-    socket.on('recognizing', () => setStatus('Mencari wajah...'));
-    socket.on('recognition_failed', (data) => setStatus(data.message || 'Wajah tidak dikenali.'));
-    
-    socket.on('login_success', (data) => {
-      setStatus('Login Berhasil!');
-      localStorage.setItem('friday_access_token', data.access_token);
-      stopRecognition();
-      setTimeout(() => navigate('/'), 1000);
-    });
-
-    return () => {
-      stopRecognition();
-      socket.disconnect();
-    };
-  }, [navigate]);
-
-  const startRecognition = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
-    setIsRecognizing(true);
-    setStatus('Membuka kamera...');
+  const handleFaceLogin = async () => {
+    setStatus('scanning');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus('error');
+      return;
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      videoRef.current.srcObject = stream;
-      videoRef.current.play();
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
 
-      // Kirim frame ke backend setiap 500ms
-      const intervalId = setInterval(() => {
-        if (videoRef.current && canvasRef.current) {
-          const video = videoRef.current;
-          const canvas = canvasRef.current;
-          const context = canvas.getContext('2d');
-          if (context) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
-            socketRef.current?.emit('recognize_frame', imageData);
-          }
-        }
-      }, 500); // Interval pengiriman frame
-      
-      // Simpan interval ID untuk dihentikan nanti
-      (videoRef.current as any).intervalId = intervalId;
+      // Beri waktu kamera untuk inisialisasi
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
-    } catch (err) {
-      setStatus('Gagal mengakses kamera. Mohon izinkan akses.');
-      setIsRecognizing(false);
+      const canvas = document.createElement('canvas');
+      if (!videoRef.current) throw new Error("Video ref not available");
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error("Canvas context not available");
+
+      context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL('image/jpeg');
+
+      const response = await fetch('http://localhost:5000/api/face-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageData } ),
+      });
+
+      const data = await response.json();
+      stopCamera();
+
+      if (response.ok && data.access_token) {
+        setStatus('success');
+        // 3. PANGGIL JEMBATAN KOMUNIKASI!
+        // Panggil fungsi dari induk dan kirimkan tokennya.
+        onLoginSuccess(data.access_token);
+      } else {
+        setStatus('not_found');
+      }
+    } catch (error) {
+      console.error("Face login error:", error);
+      setStatus('error');
+      stopCamera();
     }
   };
 
-  const stopRecognition = () => {
-    if (videoRef.current) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream?.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-      clearInterval((videoRef.current as any).intervalId);
+  const renderStatus = () => {
+    switch (status) {
+      case 'scanning': return <><Loader2 className="w-4 h-4 animate-spin" /> Memindai...</>;
+      case 'success': return <><UserCheck className="w-4 h-4 text-green-400" /> Login Berhasil!</>;
+      case 'not_found': return <><UserX className="w-4 h-4 text-yellow-400" /> Wajah tidak dikenali</>;
+      case 'error': return <span className="text-red-400">Kamera error</span>;
+      default: return <>Masuk dengan Wajah</>;
     }
-    setIsRecognizing(false);
-    setStatus('Menunggu...');
   };
 
   return (
-    <div className="w-full text-center mt-6">
-      <div className="relative w-48 h-36 mx-auto bg-input/30 rounded-lg overflow-hidden border-2 border-dashed border-border flex items-center justify-center">
-        <video ref={videoRef} className={`w-full h-full object-cover ${isRecognizing ? 'block' : 'hidden'}`} />
-        {!isRecognizing && <Camera size={40} className="text-muted-foreground" />}
-        <canvas ref={canvasRef} className="hidden" />
-      </div>
-      <p className="text-xs text-muted-foreground mt-2 h-4">{status}</p>
-      
-      {!isRecognizing ? (
-        <button onClick={startRecognition} className="mt-4 px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary to-accent rounded-lg hover:opacity-90 transition-opacity">
-          Masuk dengan Wajah
-        </button>
-      ) : (
-        <button onClick={stopRecognition} className="mt-4 px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors">
-          Hentikan
-        </button>
+    <div className="flex flex-col items-center gap-3">
+      {status === 'scanning' && (
+        <div className="w-full aspect-video rounded-lg bg-black overflow-hidden border border-primary/50">
+          <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+        </div>
       )}
+      <button
+        onClick={handleFaceLogin}
+        disabled={status === 'scanning' || status === 'success'}
+        className="w-full py-3 font-semibold text-lg text-primary-foreground bg-gradient-to-r from-secondary to-purple-600 rounded-xl hover:shadow-lg hover:shadow-secondary/30 transition-all duration-300 flex items-center justify-center gap-2 transform hover:-translate-y-1 disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {status === 'idle' && <Camera className="w-5 h-5" />}
+        {renderStatus()}
+      </button>
     </div>
   );
 };

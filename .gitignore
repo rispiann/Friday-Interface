@@ -23,3 +23,33 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# ===================================================================
+# Aturan Spesifik untuk Backend Friday AI
+# ===================================================================
+
+# Abaikan folder yang berisi gambar wajah pengguna
+faces/
+
+# Abaikan file model AI yang sudah dilatih
+face_model.yml
+face_model_labels.json
+
+# Abaikan database vektor ChromaDB jika disimpan secara lokal
+chroma/
+
+# Abaikan folder environment virtual Python
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Abaikan cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===================================================================
+

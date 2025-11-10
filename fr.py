@@ -109,7 +109,7 @@ MODEL_PATH = "face_model.yml"
 LABELS_PATH = "face_model_labels.json"
 NUM_SAMPLES = int(os.getenv("FACES_SAMPLES", "20"))
 SAMPLE_DELAY = float(os.getenv("FACE_SAMPLE_DELAY", "0.25"))
-LBPH_CONFIDENCE_THRESHOLD = float(os.getenv("LBPH_CONFIDENCE_THRESHOLD", "70.0"))
+LBPH_CONFIDENCE_THRESHOLD = float(os.getenv("LBPH_CONFIDENCE_THRESHOLD", "85.0"))
 
 os.makedirs(FACES_DIR, exist_ok=True)
 
@@ -421,21 +421,24 @@ def capture_face_samples(user_name):
         speak(f"Only captured {count} samples. Please try again, sir.")
         return False
 
+
 def train_face_model():
-    """Train the face recognition model"""
+    """Melatih model pengenalan wajah dan mengembalikan True/False."""
     if not recognizer:
-        speak("Face recognition is not available, sir.")
+        print("ERROR: Face recognizer tidak tersedia.")
         return False
     
-    speak("Training face recognition model, sir. This may take a moment.")
+    print("Memulai pelatihan model pengenalan wajah...")
     
     faces = []
     labels = []
     label_dict = {}
     current_label = 0
     
-    for user_name in os.listdir(FACES_DIR):
-        user_path = os.path.join(FACES_DIR, user_name)
+    faces_dir = "faces" # Pastikan variabel ini ada
+    
+    for user_name in os.listdir(faces_dir):
+        user_path = os.path.join(faces_dir, user_name)
         if not os.path.isdir(user_path):
             continue
             
@@ -443,25 +446,34 @@ def train_face_model():
         
         for img_name in os.listdir(user_path):
             img_path = os.path.join(user_path, img_name)
-            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                faces.append(img)
-                labels.append(current_label)
+            try:
+                img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+                if img is not None:
+                    faces.append(img)
+                    labels.append(current_label)
+            except Exception as e:
+                print(f"Gagal membaca gambar {img_path}: {e}")
+                continue
         
         current_label += 1
     
-    if len(faces) == 0:
-        speak("No face data found for training, sir.")
+    if len(faces) == 0 or len(labels) == 0:
+        print("Tidak ada data wajah untuk dilatih.")
         return False
     
-    recognizer.train(faces, np.array(labels))
-    recognizer.write(MODEL_PATH)
-    
-    with open(LABELS_PATH, "w") as f:
-        json.dump(label_dict, f)
-    
-    speak(f"Training complete. Recognized {len(label_dict)} users, sir.")
-    return True
+    try:
+        recognizer.train(faces, np.array(labels))
+        recognizer.write(MODEL_PATH)
+        
+        with open(LABELS_PATH, "w") as f:
+            json.dump(label_dict, f)
+        
+        print(f"Pelatihan selesai. Mengenali {len(label_dict)} pengguna.")
+        return True
+    except Exception as e:
+        print(f"ERROR saat pelatihan atau penyimpanan model: {e}")
+        return False
+
 
 def recognize_face():
     """Recognize face from camera"""
@@ -555,6 +567,38 @@ def list_registered_faces():
         speak(f"Registered users: {user_list}, sir.")
     else:
         speak("No registered users found, sir.")
+        
+def recognize_face_from_image(image_array):
+    if not recognizer or not os.path.exists(MODEL_PATH):
+        print("Model pengenalan wajah belum dilatih atau tidak tersedia.")
+        return None
+    
+    try:
+        with open(LABELS_PATH, "r") as f:
+            label_dict = json.load(f)
+            label_dict = {int(k): v for k, v in label_dict.items()}
+    except Exception as e:
+        print(f"Tidak dapat memuat label model: {e}")
+        return None
+    
+    recognizer.read(MODEL_PATH)
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    
+    gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+    
+    for (x, y, w, h) in faces:
+        face_img = gray[y:y+h, x:x+w]
+        label, confidence = recognizer.predict(face_img)
+        
+        print(f"Wajah terdeteksi. Label: {label}, Confidence: {confidence}")
+        
+        if confidence < LBPH_CONFIDENCE_THRESHOLD:
+            recognized_user = label_dict.get(label)
+            if recognized_user:
+                return recognized_user
+            
+    return None
 
 
 def handle_command(command):

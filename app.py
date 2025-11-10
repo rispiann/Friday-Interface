@@ -1,34 +1,27 @@
 import os
 import jwt
 import base64
-import numpy as np
 import cv2
+import numpy as np
 from flask import Flask, request, Response, stream_with_context, jsonify
-from flask_socketio import SocketIO, emit # <-- Impor baru
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 import mysql.connector
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-# Impor fungsi-fungsi relevan dari fr.py
-from fr import create_recognizer, recognize_face, friday_response
+from plugin_manager import plugin_manager
+from fr import ask_openrouter, recognize_face_from_image
+from fr import train_face_model
 
-# --- 1. Inisialisasi & Konfigurasi ---
+# --- Inisialisasi & Konfigurasi ---
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "INI-KUNCI-RAHASIA-YANG-PASTI-BERHASIL-KARENA-KITA-YANG-BUAT"
 bcrypt = Bcrypt(app)
-
-# Inisialisasi SocketIO dengan mode async 'eventlet'
-socketio = SocketIO(app, cors_allowed_origins="http://localhost:8080", async_mode='eventlet' )
-
-CORS(app, resources={r"/api/*": {
-    "origins": "http://localhost:8080",
-    "methods": ["GET", "POST", "DELETE", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization"]
-}} )
-
+app.config["SECRET_KEY"] = "INI-KUNCI-RAHASIA-YANG-PASTI-BERHASIL-KARENA-KITA-YANG-BUAT"
+# Pastikan CORS mengizinkan semua metode yang kita butuhkan
+CORS(app, resources={r"/api/*": {"origins": "http://localhost:8080", "methods": ["GET", "POST", "DELETE", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"]}} )
 db_config = { 'host': 'localhost', 'user': 'root', 'password': 'ris132109', 'database': 'friday_db' }
 
+# --- Fungsi Helper & Dekorator ---
 def get_db_connection():
     try:
         conn = mysql.connector.connect(**db_config)
@@ -37,119 +30,48 @@ def get_db_connection():
         print(f"DATABASE ERROR: {err}")
         return None
 
-# --- 2. Dekorator Autentikasi (Tidak Berubah) ---
 def token_required(f):
-    # ... (kode dekorator ini tidak berubah)
     @wraps(f)
     def decorated(*args, **kwargs):
         token = None
         if 'Authorization' in request.headers:
-            try:
-                token = request.headers['Authorization'].split(" ")[1]
-            except IndexError:
-                return jsonify({'message': 'Token tidak memiliki format yang benar!'}), 401
-        if not token:
-            return jsonify({'message': 'Token tidak ditemukan!'}), 401
+            try: token = request.headers['Authorization'].split(" ")[1]
+            except IndexError: return jsonify({'message': 'Token tidak memiliki format yang benar!'}), 401
+        if not token: return jsonify({'message': 'Token tidak ditemukan!'}), 401
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-            current_user_id = data['user_id']
-        except Exception as e:
-            return jsonify({'message': f'Token tidak valid! {str(e)}'}), 401
-        return f(current_user_id, *args, **kwargs)
+            kwargs['current_user_id'] = data['user_id'] # Masukkan user_id ke kwargs
+        except Exception as e: return jsonify({'message': f'Token tidak valid! {str(e)}'}), 401
+        return f(*args, **kwargs)
     return decorated
 
+def friday_response(user_message: str):
+    plugin_result = plugin_manager.find_and_execute_plugin(user_message)
+    if plugin_result:
+        if isinstance(plugin_result, dict): return plugin_result
+        def stream_plugin_result():
+            words = str(plugin_result).split()
+            for word in words: yield word + " "
+        return stream_plugin_result()
+    return ask_openrouter(user_message)
 
-# --- 3. Logika Pengenalan Wajah yang Diadaptasi untuk API ---
-face_recognizer = create_recognizer()
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-def recognize_face_from_image(image_data, recognizer):
-    """Fungsi ini mengenali wajah dari data gambar yang diterima dari frontend."""
-    if not recognizer: return None
-    
-    # Decode gambar dari base64
+def save_message_to_db(user_id, role, message):
+    conn = get_db_connection()
+    if conn is None: return
     try:
-        header, encoded = image_data.split(",", 1)
-        img_bytes = base64.b64decode(encoded)
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    except Exception as e:
-        print(f"Error decoding image: {e}")
-        return None
+        cursor = conn.cursor()
+        query = "INSERT INTO chat_history (user_id, role, message, timestamp) VALUES (%s, %s, %s, %s)"
+        cursor.execute(query, (user_id, role, message, datetime.now()))
+        conn.commit()
+    except mysql.connector.Error as err:
+        print(f"Gagal menyimpan pesan ke DB: {err}"); conn.rollback()
+    finally:
+        if conn.is_connected(): cursor.close(); conn.close()
 
-    # Gunakan fungsi recognize_face yang sudah ada (atau logikanya)
-    # Kita akan adaptasi logikanya di sini agar tidak membuka kamera di server
-    # Anda perlu memastikan file model dan label ada
-    try:
-        import json
-        recognizer.read("face_model.yml")
-        with open("face_model_labels.json", "r") as f:
-            label_dict = json.load(f)
-            label_dict = {int(k): v for k, v in label_dict.items()}
-    except FileNotFoundError:
-        print("Model atau label pengenalan wajah tidak ditemukan di server.")
-        return None
+# --- ENDPOINT APLIKASI ---
 
-    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-    for (x, y, w, h) in faces:
-        face_img = gray[y:y+h, x:x+w]
-        label, confidence = recognizer.predict(face_img)
-        
-        # Sesuaikan threshold confidence Anda
-        if confidence < 70.0: 
-            recognized_user_name = label_dict.get(label)
-            print(f"Wajah dikenali: {recognized_user_name} dengan confidence {confidence}")
-            return recognized_user_name
-
-    return None
-
-# --- 4. Event Handler untuk Socket.IO ---
-
-@socketio.on('connect')
-def handle_connect():
-    """Handler saat frontend berhasil terhubung ke WebSocket."""
-    print('Client terhubung ke WebSocket')
-
-@socketio.on('recognize_frame')
-def handle_recognize_frame(image_data):
-    """Handler utama: menerima frame, mengenali wajah, dan mengirim token jika berhasil."""
-    recognized_username = recognize_face_from_image(image_data, face_recognizer)
-    
-    if recognized_username:
-        print(f"Login berhasil untuk: {recognized_username}")
-        conn = get_db_connection()
-        if conn is None: return
-        
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id FROM users WHERE username = %s", (recognized_username,))
-        user = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if user:
-            # Buat token JWT
-            payload = {'user_id': user['id'], 'exp': datetime.now(timezone.utc) + timedelta(hours=1)}
-            token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm="HS256")
-            
-            # Kirim token kembali ke frontend melalui WebSocket
-            emit('login_success', {'access_token': token})
-        else:
-            emit('recognition_failed', {'message': 'Pengguna tidak ditemukan di database'})
-    else:
-        # Opsional: kirim status 'mencari' kembali ke frontend
-        emit('recognizing', {'status': 'Mencari wajah...'})
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    print('Client terputus dari WebSocket')
-
-
-# --- 5. Endpoint HTTP (Tidak Berubah) ---
-# ... (semua endpoint @app.route Anda dari /register hingga /api/chat tetap di sini) ...
 @app.route("/api/register", methods=["POST"])
 def register():
-    # ... (kode tidak berubah)
     data = request.get_json()
     username, password = data.get("username"), data.get("password")
     if not username or not password: return jsonify({"error": "Username dan password dibutuhkan"}), 400
@@ -166,13 +88,10 @@ def register():
         if err.errno == 1062: return jsonify({"error": "Username sudah digunakan"}), 409
         return jsonify({"error": f"Gagal mendaftar: {str(err)}"}), 500
     finally:
-        cursor.close()
-        conn.close()
-
+        cursor.close(); conn.close()
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    # ... (kode tidak berubah)
     data = request.get_json()
     username, password = data.get("username"), data.get("password")
     if not username or not password: return jsonify({"error": "Username dan password dibutuhkan"}), 400
@@ -191,13 +110,97 @@ def login():
     except mysql.connector.Error as err:
         return jsonify({"error": f"Terjadi kesalahan server: {str(err)}"}), 500
     finally:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
+
+@app.route("/api/face-login", methods=["POST"])
+def face_login():
+    data = request.get_json()
+    if 'image' not in data:
+        return jsonify({"error": "Tidak ada data gambar"}), 400
+
+    # Decode gambar dari base64
+    image_data = data['image'].split(',')[1]
+    decoded_image = base64.b64decode(image_data)
+    np_arr = np.frombuffer(decoded_image, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+    # Panggil fungsi pengenalan wajah dari fr.py
+    recognized_username = recognize_face_from_image(img)
+
+    if recognized_username:
+        # Jika wajah dikenali, cari user di database
+        conn = get_db_connection()
+        if conn is None: return jsonify({"error": "Koneksi ke database gagal"}), 500
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id FROM users WHERE username = %s", (recognized_username,))
+        user = cursor.fetchone()
+        cursor.close(); conn.close()
+
+        if user:
+            # Buat dan kirim token sama seperti login biasa
+            user_id = user['id']
+            payload = {'user_id': user_id, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)}
+            token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm="HS256")
+            return jsonify(access_token=token), 200
+        else:
+            return jsonify({"error": "Wajah dikenali tapi pengguna tidak ditemukan di database"}), 404
+    else:
+        return jsonify({"error": "Wajah tidak dikenali"}), 401
+
+@app.route("/api/face-register", methods=["POST"])
+@token_required
+def face_register(current_user_id):
+    data = request.get_json()
+    if 'images' not in data or not isinstance(data['images'], list):
+        return jsonify({"error": "Data gambar tidak ada atau formatnya salah"}), 400
+
+    # Dapatkan username pengguna saat ini untuk nama folder
+    conn = get_db_connection()
+    if conn is None: return jsonify({"error": "Koneksi database gagal"}), 500
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT username FROM users WHERE id = %s", (current_user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not user:
+        return jsonify({"error": "Pengguna tidak ditemukan"}), 404
+    
+    username = user['username']
+    user_face_dir = os.path.join('faces', username)
+    os.makedirs(user_face_dir, exist_ok=True)
+
+    # Simpan setiap gambar sampel yang dikirim dari frontend
+    image_count = 0
+    for i, image_data_url in enumerate(data['images']):
+        try:
+            image_data = image_data_url.split(',')[1]
+            decoded_image = base64.b64decode(image_data)
+            
+            # Simpan file gambar
+            file_path = os.path.join(user_face_dir, f"{username}_{i + 1}.jpg")
+            with open(file_path, 'wb') as f:
+                f.write(decoded_image)
+            image_count += 1
+        except Exception as e:
+            print(f"Gagal menyimpan gambar sampel ke-{i+1}: {e}")
+            # Lanjutkan saja jika satu gambar gagal
+            continue
+    
+    if image_count < 5: # Butuh setidaknya beberapa sampel
+        return jsonify({"error": f"Gagal menyimpan cukup sampel wajah. Hanya {image_count} yang tersimpan."}), 500
+
+    # Setelah semua sampel disimpan, latih ulang model
+    training_success = train_face_model()
+    
+    if training_success:
+        return jsonify({"message": f"Wajah untuk '{username}' berhasil didaftarkan dan model telah dilatih ulang."}), 201
+    else:
+        return jsonify({"error": "Sampel wajah berhasil disimpan, tetapi pelatihan model gagal."}), 500
 
 @app.route("/api/me", methods=["GET"])
 @token_required
 def get_current_user(current_user_id):
-    # ... (kode tidak berubah)
     conn = get_db_connection()
     if conn is None: return jsonify({"error": "Koneksi ke database gagal"}), 500
     try:
@@ -211,11 +214,9 @@ def get_current_user(current_user_id):
     finally:
         if conn.is_connected(): cursor.close(); conn.close()
 
-
 @app.route("/api/chat/history", methods=["GET"])
 @token_required
 def get_chat_history(current_user_id):
-    # ... (kode tidak berubah)
     conn = get_db_connection()
     if conn is None: return jsonify({"error": "Koneksi ke database gagal"}), 500
     try:
@@ -230,11 +231,9 @@ def get_chat_history(current_user_id):
     finally:
         if conn.is_connected(): cursor.close(); conn.close()
 
-
 @app.route("/api/chat/history", methods=["DELETE"])
 @token_required
 def delete_chat_history(current_user_id):
-    # ... (kode tidak berubah)
     conn = get_db_connection()
     if conn is None: return jsonify({"error": "Koneksi ke database gagal"}), 500
     try:
@@ -252,35 +251,23 @@ def delete_chat_history(current_user_id):
 @app.route("/api/chat", methods=["POST"])
 @token_required
 def chat(current_user_id):
-    # ... (kode tidak berubah)
     data = request.get_json()
     user_message = data.get("message", "")
     save_message_to_db(current_user_id, 'user', user_message)
-    def stream_and_save():
-        full_bot_response = ""
-        for chunk in friday_response(user_message):
-            full_bot_response += chunk
-            yield chunk
-        if full_bot_response:
-            save_message_to_db(current_user_id, 'bot', full_bot_response.strip())
-    return Response(stream_with_context(stream_and_save()), mimetype="text/plain")
+    response_data = friday_response(user_message)
+    if isinstance(response_data, dict):
+        save_message_to_db(current_user_id, 'bot', f"[Data Terstruktur: {response_data.get('type')}]")
+        return jsonify(response_data)
+    else:
+        def stream_and_save():
+            full_bot_response = ""
+            for chunk in response_data:
+                full_bot_response += chunk
+                yield chunk
+            if full_bot_response:
+                save_message_to_db(current_user_id, 'bot', full_bot_response.strip())
+        return Response(stream_with_context(stream_and_save()), mimetype="text/plain")
 
-def save_message_to_db(user_id, role, message):
-    conn = get_db_connection()
-    if conn is None: return
-    try:
-        cursor = conn.cursor()
-        query = "INSERT INTO chat_history (user_id, role, message, timestamp) VALUES (%s, %s, %s, %s)"
-        cursor.execute(query, (user_id, role, message, datetime.now()))
-        conn.commit()
-    except mysql.connector.Error as err:
-        print(f"Gagal menyimpan pesan ke DB: {err}"); conn.rollback()
-    finally:
-        if conn.is_connected(): cursor.close(); conn.close()
-
-
-# --- 6. Menjalankan Aplikasi dengan SocketIO ---
+# --- Menjalankan Aplikasi ---
 if __name__ == "__main__":
-    print("Menjalankan server dengan SocketIO...")
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
-
+    app.run(host="0.0.0.0", port=5000, debug=True)

@@ -1,24 +1,26 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom"; // Impor Link
 import { ChatMessage } from "@/components/ChatMessage";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { ChatInput } from "@/components/ChatInput";
 import { ParticleBackground } from "@/components/ParticleBackground";
-import { ConfirmationModal } from "@/components/ConfirmationModal"; // Impor modal baru
-import { Bot, Sparkles, LogOut, Trash2, User, Loader2 } from "lucide-react";
+import { ConfirmationModal } from "@/components/ConfirmationModal";
+import { WeatherCard } from "@/components/WeatherCard";
+import { Bot, Sparkles, LogOut, Trash2, User, Loader2, Settings } from "lucide-react"; // Impor ikon Settings
 
+// Interface pesan yang fleksibel
 interface Message {
   id: number;
-  text: string;
-  isBot: boolean;
   timestamp: string;
+  isBot: boolean;
+  content: string | { type: string; data: any }; // Bisa string atau objek
 }
 
 const getTimestamp = () => new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
 
 const WELCOME_MESSAGE_IF_EMPTY: Message = { 
     id: 1, 
-    text: "Riwayat obrolan Anda kosong. Mulailah percakapan!", 
+    content: "Riwayat obrolan Anda kosong. Mulailah percakapan!", 
     isBot: true, 
     timestamp: getTimestamp() 
 };
@@ -29,7 +31,7 @@ const Index = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false); // State untuk modal
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -43,15 +45,20 @@ const Index = () => {
           fetch("http://localhost:5000/api/me", { headers: { "Authorization": `Bearer ${token}` } } )
         ]);
         if (historyResponse.status === 401 || meResponse.status === 401) { throw new Error("Sesi tidak valid"); }
+        
         const history = await historyResponse.json();
         if (history.length > 0) {
           const formattedMessages = history.map((msg, index) => ({
-            id: Date.now() + index, text: msg.text, isBot: msg.isBot, timestamp: msg.timestamp
+            id: Date.now() + index,
+            content: msg.text,
+            isBot: msg.isBot,
+            timestamp: msg.timestamp
           }));
           setMessages(formattedMessages);
         } else {
           setMessages([WELCOME_MESSAGE_IF_EMPTY]);
         }
+        
         const meData = await meResponse.json();
         if (meData.username) { setUsername(meData.username); }
       } catch (error) {
@@ -68,12 +75,8 @@ const Index = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("friday_access_token");
-    navigate("/login");
-  };
+  const handleLogout = () => { localStorage.removeItem("friday_access_token"); navigate("/login"); };
 
-  // Fungsi yang menjalankan penghapusan setelah dikonfirmasi
   const performClearChat = async () => {
     setIsClearing(true);
     const token = localStorage.getItem("friday_access_token");
@@ -93,41 +96,57 @@ const Index = () => {
     }
   };
 
-  // Fungsi ini sekarang hanya untuk membuka modal
-  const handleOpenClearModal = () => {
-    setIsModalOpen(true);
-  };
+  const handleOpenClearModal = () => setIsModalOpen(true);
 
   const handleSendMessage = async (text: string) => {
-    // ... (kode handleSendMessage tidak berubah)
-    const userMessage: Message = { id: Date.now(), text, isBot: false, timestamp: getTimestamp() };
+    const userMessage: Message = { id: Date.now(), content: text, isBot: false, timestamp: getTimestamp() };
     setMessages(prev => (prev.length === 1 && prev[0].id === 1) ? [userMessage] : [...prev, userMessage]);
     setIsTyping(true);
-    const botMessageId = Date.now() + 1;
-    const placeholderMessage: Message = { id: botMessageId, text: "", isBot: true, timestamp: getTimestamp() };
-    setMessages((prev) => [...prev, placeholderMessage]);
+
     const token = localStorage.getItem("friday_access_token");
     if (!token) { setTimeout(() => navigate("/login"), 1500); return; }
+
     try {
       const response = await fetch("http://localhost:5000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ message: text } ),
       });
-      if (!response.ok) { throw new Error(response.statusText || "Terjadi kesalahan pada server"); }
-      if (!response.body) { throw new Error("Response body tidak ada."); }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        setMessages(currentMessages => currentMessages.map(msg => msg.id === botMessageId ? { ...msg, text: msg.text + chunk } : msg));
+
+      if (!response.ok) throw new Error(response.statusText);
+
+      const contentType = response.headers.get("content-type");
+      
+      if (contentType && contentType.includes("application/json")) {
+        const jsonData = await response.json();
+        const botMessage: Message = { id: Date.now() + 1, isBot: true, content: jsonData, timestamp: getTimestamp() };
+        setMessages(prev => [...prev, botMessage]);
+      } else {
+        const botMessageId = Date.now() + 1;
+        const placeholderMessage: Message = { id: botMessageId, content: "", isBot: true, timestamp: getTimestamp() };
+        setMessages((prev) => [...prev, placeholderMessage]);
+
+        if (!response.body) throw new Error("Response body tidak ada.");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          setMessages(currentMessages => 
+            currentMessages.map(msg => 
+              (msg.id === botMessageId && typeof msg.content === 'string') 
+                ? { ...msg, content: msg.content + chunk } 
+                : msg
+            )
+          );
+        }
       }
     } catch (error: any) {
       localStorage.removeItem("friday_access_token");
       const errorMessageText = `⚠️ Sesi berakhir atau terjadi kesalahan. Mengalihkan ke halaman login...`;
-      setMessages(currentMessages => currentMessages.map(msg => msg.id === botMessageId ? { ...msg, text: errorMessageText } : msg));
+      const errorBotMessage: Message = { id: Date.now() + 1, content: errorMessageText, isBot: true, timestamp: getTimestamp() };
+      setMessages(prev => [...prev, errorBotMessage]);
       setTimeout(() => navigate("/login"), 3000);
     } finally {
       setIsTyping(false);
@@ -154,10 +173,9 @@ const Index = () => {
               <div className="flex-1 mt-6">
                 <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4" />Fitur</h3>
                 <div className="space-y-2">
-                  {["Chat Interaktif", "Respons Real-time", "Terintegrasi AI", "Kontrol Spotify"].map((feature, idx) => (<div key={idx} className="p-3 rounded-xl bg-muted/20 border border-glass-border backdrop-blur-sm hover:bg-muted/30 transition-all duration-300 hover:scale-105 cursor-default"><p className="text-xs text-foreground/80">{feature}</p></div>))}
+                  {["Chat Interaktif", "Respons Real-time", "Terintegrasi AI", "Kontrol Weather API"].map((feature, idx) => (<div key={idx} className="p-3 rounded-xl bg-muted/20 border border-glass-border backdrop-blur-sm hover:bg-muted/30 transition-all duration-300 hover:scale-105 cursor-default"><p className="text-xs text-foreground/80">{feature}</p></div>))}
                 </div>
               </div>
-              
               <div className="space-y-2">
                 <button onClick={handleOpenClearModal} disabled={isClearing} className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-lg hover:bg-yellow-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                   {isClearing ? (<Loader2 size={16} className="animate-spin" />) : (<Trash2 size={16} />)}
@@ -178,11 +196,21 @@ const Index = () => {
                     {username ? (<p className="text-xs text-muted-foreground flex items-center gap-1.5"><User size={12} /> {username}</p>) : (<p className="text-xs text-muted-foreground">Online</p>)}
                   </div>
                 </div>
-                <div className="md:hidden flex gap-2">
-                  <button onClick={handleOpenClearModal} disabled={isClearing} className="p-2 text-yellow-300 rounded-full bg-yellow-500/10 hover:bg-yellow-500/20 disabled:opacity-50">
-                    {isClearing ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
-                  </button>
-                  <button onClick={handleLogout} className="p-2 text-red-400 rounded-full bg-red-500/10 hover:bg-red-500/20"><LogOut size={18} /></button>
+                
+                {/* --- TOMBOL-TOMBOL HEADER KANAN --- */}
+                <div className="flex items-center gap-1">
+                  {/* Tombol Pengaturan */}
+                  <Link to="/profile" className="p-2 text-muted-foreground hover:text-white transition-colors rounded-full hover:bg-card/60">
+                    <Settings size={18} />
+                  </Link>
+                  
+                  {/* Tombol Hapus & Logout untuk Mobile */}
+                  <div className="md:hidden flex">
+                    <button onClick={handleOpenClearModal} disabled={isClearing} className="p-2 text-yellow-300 rounded-full hover:bg-yellow-500/20 disabled:opacity-50">
+                      {isClearing ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                    </button>
+                    <button onClick={handleLogout} className="p-2 text-red-400 rounded-full hover:bg-red-500/20"><LogOut size={18} /></button>
+                  </div>
                 </div>
               </div>
               
@@ -190,7 +218,15 @@ const Index = () => {
                 {isLoading ? (
                   <div className="flex justify-center items-center h-full"><div className="text-center text-muted-foreground"><Bot className="w-12 h-12 mx-auto animate-spin-slow" /><p className="mt-4">Menyiapkan sesi...</p></div></div>
                 ) : (
-                  messages.map((message) => (<ChatMessage key={message.id} message={message.text} isBot={message.isBot} timestamp={message.timestamp} />))
+                  messages.map((message) => {
+                    if (typeof message.content === 'object' && message.content.type === 'weather_card') {
+                      return <WeatherCard key={message.id} data={message.content.data} />;
+                    }
+                    if (typeof message.content === 'string') {
+                      return <ChatMessage key={message.id} message={message.content} isBot={message.isBot} timestamp={message.timestamp} />;
+                    }
+                    return null;
+                  })
                 )}
                 {isTyping && <TypingIndicator />}
                 <div ref={messagesEndRef} />
