@@ -1,31 +1,29 @@
+// src/pages/Index.tsx
+
 import { useState, useRef, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom"; // Impor Link
+import { useNavigate, Link } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { ChatInput } from "@/components/ChatInput";
 import { ParticleBackground } from "@/components/ParticleBackground";
 import { ConfirmationModal } from "@/components/ConfirmationModal";
 import { WeatherCard } from "@/components/WeatherCard";
-import { Bot, Sparkles, LogOut, Trash2, User, Loader2, Settings } from "lucide-react"; // Impor ikon Settings
+import { SpotifyCard } from "@/components/SpotifyCard"; // <-- 1. Impor komponen baru
+import { Bot, Sparkles, LogOut, Trash2, User, Loader2, Settings } from "lucide-react";
 
-// Interface pesan yang fleksibel
+// ... (Interface Message, getTimestamp, WELCOME_MESSAGE_IF_EMPTY tidak berubah) ...
 interface Message {
   id: number;
   timestamp: string;
   isBot: boolean;
-  content: string | { type: string; data: any }; // Bisa string atau objek
+  content: string | { type: string; data: any };
 }
-
 const getTimestamp = () => new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+const WELCOME_MESSAGE_IF_EMPTY: Message = { id: 1, content: "Riwayat obrolan Anda kosong. Mulailah percakapan!", isBot: true, timestamp: getTimestamp() };
 
-const WELCOME_MESSAGE_IF_EMPTY: Message = { 
-    id: 1, 
-    content: "Riwayat obrolan Anda kosong. Mulailah percakapan!", 
-    isBot: true, 
-    timestamp: getTimestamp() 
-};
 
 const Index = () => {
+  // ... (Semua state dan fungsi (useEffect, handleLogout, handleSendMessage, dll) TIDAK ADA PERUBAHAN) ...
   const [messages, setMessages] = useState<Message[]>([]);
   const [username, setUsername] = useState<string>("");
   const [isTyping, setIsTyping] = useState(false);
@@ -173,7 +171,7 @@ const Index = () => {
               <div className="flex-1 mt-6">
                 <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4" />Fitur</h3>
                 <div className="space-y-2">
-                  {["Chat Interaktif", "Respons Real-time", "Terintegrasi AI", "Kontrol Weather API"].map((feature, idx) => (<div key={idx} className="p-3 rounded-xl bg-muted/20 border border-glass-border backdrop-blur-sm hover:bg-muted/30 transition-all duration-300 hover:scale-105 cursor-default"><p className="text-xs text-foreground/80">{feature}</p></div>))}
+                  {["Chat Interaktif", "Respons Real-time", "Terintegrasi AI", "Kontrol Spotify"].map((feature, idx) => (<div key={idx} className="p-3 rounded-xl bg-muted/20 border border-glass-border backdrop-blur-sm hover:bg-muted/30 transition-all duration-300 hover:scale-105 cursor-default"><p className="text-xs text-foreground/80">{feature}</p></div>))}
                 </div>
               </div>
               <div className="space-y-2">
@@ -196,19 +194,10 @@ const Index = () => {
                     {username ? (<p className="text-xs text-muted-foreground flex items-center gap-1.5"><User size={12} /> {username}</p>) : (<p className="text-xs text-muted-foreground">Online</p>)}
                   </div>
                 </div>
-                
-                {/* --- TOMBOL-TOMBOL HEADER KANAN --- */}
                 <div className="flex items-center gap-1">
-                  {/* Tombol Pengaturan */}
-                  <Link to="/profile" className="p-2 text-muted-foreground hover:text-white transition-colors rounded-full hover:bg-card/60">
-                    <Settings size={18} />
-                  </Link>
-                  
-                  {/* Tombol Hapus & Logout untuk Mobile */}
+                  <Link to="/profile" className="p-2 text-muted-foreground hover:text-white transition-colors rounded-full hover:bg-card/60"><Settings size={18} /></Link>
                   <div className="md:hidden flex">
-                    <button onClick={handleOpenClearModal} disabled={isClearing} className="p-2 text-yellow-300 rounded-full hover:bg-yellow-500/20 disabled:opacity-50">
-                      {isClearing ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
-                    </button>
+                    <button onClick={handleOpenClearModal} disabled={isClearing} className="p-2 text-yellow-300 rounded-full hover:bg-yellow-500/20 disabled:opacity-50">{isClearing ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}</button>
                     <button onClick={handleLogout} className="p-2 text-red-400 rounded-full hover:bg-red-500/20"><LogOut size={18} /></button>
                   </div>
                 </div>
@@ -218,9 +207,18 @@ const Index = () => {
                 {isLoading ? (
                   <div className="flex justify-center items-center h-full"><div className="text-center text-muted-foreground"><Bot className="w-12 h-12 mx-auto animate-spin-slow" /><p className="mt-4">Menyiapkan sesi...</p></div></div>
                 ) : (
+                  // --- 2. LOGIKA RENDER BARU ---
                   messages.map((message) => {
-                    if (typeof message.content === 'object' && message.content.type === 'weather_card') {
-                      return <WeatherCard key={message.id} data={message.content.data} />;
+                    if (typeof message.content === 'object' && message.content.type) {
+                      switch (message.content.type) {
+                        case 'weather_card':
+                          return <WeatherCard key={message.id} data={message.content.data} />;
+                        case 'spotify_card':
+                          return <SpotifyCard key={message.id} data={message.content.data} />;
+                        default:
+                          // Fallback untuk tipe kartu yang tidak dikenal
+                          return <ChatMessage key={message.id} message={`[Data terstruktur tidak dikenal: ${message.content.type}]`} isBot={true} timestamp={message.timestamp} />;
+                      }
                     }
                     if (typeof message.content === 'string') {
                       return <ChatMessage key={message.id} message={message.content} isBot={message.isBot} timestamp={message.timestamp} />;
