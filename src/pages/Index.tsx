@@ -9,7 +9,7 @@ import { ParticleBackground } from "@/components/ParticleBackground";
 import { ConfirmationModal } from "@/components/ConfirmationModal";
 import { WeatherCard } from "@/components/WeatherCard";
 import { SpotifyCard } from "@/components/SpotifyCard"; // <-- 1. Impor komponen baru
-import { Bot, Sparkles, LogOut, Trash2, User, Loader2, Settings } from "lucide-react";
+import { Bot, Sparkles, LogOut, Trash2, User, Loader2, Settings, MessageSquarePlus } from "lucide-react";
 
 // ... (Interface Message, getTimestamp, WELCOME_MESSAGE_IF_EMPTY tidak berubah) ...
 interface Message {
@@ -39,11 +39,11 @@ const Index = () => {
       if (!token) { navigate("/login"); return; }
       try {
         const [historyResponse, meResponse] = await Promise.all([
-          fetch("http://localhost:5000/api/chat/history", { headers: { "Authorization": `Bearer ${token}` } } ),
-          fetch("http://localhost:5000/api/me", { headers: { "Authorization": `Bearer ${token}` } } )
+          fetch("http://localhost:5000/api/chat/history", { headers: { "Authorization": `Bearer ${token}` } }),
+          fetch("http://localhost:5000/api/me", { headers: { "Authorization": `Bearer ${token}` } })
         ]);
         if (historyResponse.status === 401 || meResponse.status === 401) { throw new Error("Sesi tidak valid"); }
-        
+
         const history = await historyResponse.json();
         if (history.length > 0) {
           const formattedMessages = history.map((msg, index) => ({
@@ -56,7 +56,7 @@ const Index = () => {
         } else {
           setMessages([WELCOME_MESSAGE_IF_EMPTY]);
         }
-        
+
         const meData = await meResponse.json();
         if (meData.username) { setUsername(meData.username); }
       } catch (error) {
@@ -73,6 +73,13 @@ const Index = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
+  const handleNewChat = () => {
+    console.log("Memulai sesi baru...");
+    setMessages([
+      { id: Date.now(), content: `Sesi baru dimulai, ${username || 'Pengguna'}. Silakan ajukan pertanyaan.`, isBot: true, timestamp: getTimestamp() },
+    ]);
+  };
+
   const handleLogout = () => { localStorage.removeItem("friday_access_token"); navigate("/login"); };
 
   const performClearChat = async () => {
@@ -83,7 +90,7 @@ const Index = () => {
       const response = await fetch("http://localhost:5000/api/chat/history", {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
-      } );
+      });
       if (!response.ok) throw new Error("Gagal menghapus riwayat di server");
       setMessages([WELCOME_MESSAGE_IF_EMPTY]);
     } catch (error) {
@@ -108,13 +115,13 @@ const Index = () => {
       const response = await fetch("http://localhost:5000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ message: text } ),
+        body: JSON.stringify({ message: text }),
       });
 
       if (!response.ok) throw new Error(response.statusText);
 
       const contentType = response.headers.get("content-type");
-      
+
       if (contentType && contentType.includes("application/json")) {
         const jsonData = await response.json();
         const botMessage: Message = { id: Date.now() + 1, isBot: true, content: jsonData, timestamp: getTimestamp() };
@@ -131,10 +138,10 @@ const Index = () => {
           const { value, done } = await reader.read();
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
-          setMessages(currentMessages => 
-            currentMessages.map(msg => 
-              (msg.id === botMessageId && typeof msg.content === 'string') 
-                ? { ...msg, content: msg.content + chunk } 
+          setMessages(currentMessages =>
+            currentMessages.map(msg =>
+              (msg.id === botMessageId && typeof msg.content === 'string')
+                ? { ...msg, content: msg.content + chunk }
                 : msg
             )
           );
@@ -157,7 +164,7 @@ const Index = () => {
         <ParticleBackground />
         <div className="relative z-10 flex items-center justify-center min-h-screen p-4 md:p-6">
           <div className="w-full max-w-6xl h-[90vh] max-h-[900px] grid grid-cols-1 md:grid-cols-[360px_1fr] gap-4 md:gap-6">
-            
+
             <div className="hidden md:flex flex-col gap-4 p-6 rounded-3xl bg-card/20 border border-glass-border shadow-2xl shadow-black/30">
               <div className="flex flex-col items-center gap-4">
                 <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 via-accent/10 to-secondary/20 flex items-center justify-center shadow-lg shadow-primary/20 animate-float border border-primary/30">
@@ -195,6 +202,9 @@ const Index = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  <button onClick={handleNewChat} className="p-2 text-muted-foreground hover:text-white transition-colors rounded-full hover:bg-card/60">
+                    <MessageSquarePlus size={18} />
+                  </button>
                   <Link to="/profile" className="p-2 text-muted-foreground hover:text-white transition-colors rounded-full hover:bg-card/60"><Settings size={18} /></Link>
                   <div className="md:hidden flex">
                     <button onClick={handleOpenClearModal} disabled={isClearing} className="p-2 text-yellow-300 rounded-full hover:bg-yellow-500/20 disabled:opacity-50">{isClearing ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}</button>
@@ -202,7 +212,7 @@ const Index = () => {
                   </div>
                 </div>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
                 {isLoading ? (
                   <div className="flex justify-center items-center h-full"><div className="text-center text-muted-foreground"><Bot className="w-12 h-12 mx-auto animate-spin-slow" /><p className="mt-4">Menyiapkan sesi...</p></div></div>

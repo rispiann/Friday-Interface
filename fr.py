@@ -19,11 +19,11 @@ import random
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 try:
-    import chromadb
-    from chromadb.utils import embedding_functions
+    # import chromadb
+    # from chromadb.utils import embedding_functions
     chromadb_available = True
 except ImportError:
-    chromadb = None
+    # chromadb = None
     chromadb_available = False
     print("Peringatan: ChromaDB tidak terinstal. Fitur memori jangka panjang dinonaktifkan.")
 import schedule
@@ -71,42 +71,44 @@ if all([SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI]):
         print(f"Spotify init error: {e}")
 
 memory = None
-if chromadb_available:
-    try:
-        # Menggunakan model embedding default dari ChromaDB yang tidak memerlukan kunci API
-        embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-        chroma_client = chromadb.PersistentClient(path="./chroma_db")
-        memory = chroma_client.get_or_create_collection(name="friday_memory", embedding_function=embedding_fn)
-        print("Memori jangka panjang (ChromaDB) berhasil diaktifkan.")
-    except Exception as e:
-        print(f"ChromaDB/Memory init error: {e}")
-else:
-    print("Fitur memori jangka panjang tidak diaktifkan karena ChromaDB tidak terinstal.")
+# if chromadb_available:
+#     try:
+#         # Menggunakan model embedding default dari ChromaDB yang tidak memerlukan kunci API
+#         embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+#         chroma_client = chromadb.PersistentClient(path="./chroma_db")
+#         memory = chroma_client.get_or_create_collection(name="friday_memory", embedding_function=embedding_fn)
+#         print("Memori jangka panjang (ChromaDB) berhasil diaktifkan.")
+#     except Exception as e:
+#         print(f"ChromaDB/Memory init error: {e}")
+# else:
+#     print("Fitur memori jangka panjang tidak diaktifkan karena ChromaDB tidak terinstal.")
 
 
 def save_memory(role: str, text: str):
-    """Menyimpan teks ke dalam memori jangka panjang."""
-    if memory and text and text.strip():
-        try:
-            unique_id = f"{role}_{int(time.time() * 1000)}"
-            memory.add(documents=[text], metadatas=[{"role": role}], ids=[unique_id])
-        except Exception as e:
-            print(f"Gagal menyimpan ke memori: {e}")
+    # """Menyimpan teks ke dalam memori jangka panjang."""
+    # if memory and text and text.strip():
+    #     try:
+    #         unique_id = f"{role}_{int(time.time() * 1000)}"
+    #         memory.add(documents=[text], metadatas=[{"role": role}], ids=[unique_id])
+    #     except Exception as e:
+    #         print(f"Gagal menyimpan ke memori: {e}")
+    pass
 
 def recall_memory(query: str) -> str:
-    """Mengambil kembali memori yang relevan berdasarkan query."""
-    if memory:
-        try:
-            results = memory.query(query_texts=[query], n_results=3)
-            if results and results["documents"] and results["documents"][0]:
-                return "\n".join(results["documents"][0])
-        except Exception as e:
-            print(f"Gagal mengambil dari memori: {e}")
+    # """Mengambil kembali memori yang relevan berdasarkan query."""
+    # if memory:
+    #     try:
+    #         results = memory.query(query_texts=[query], n_results=3)
+    #         if results and results["documents"] and results["documents"][0]:
+    #             return "\n".join(results["documents"][0])
+    #     except Exception as e:
+    #         print(f"Gagal mengambil dari memori: {e}")
     return ""
 
 def ask_ai(prompt: str):
     """
-    Fungsi AI utama yang berkomunikasi dengan Groq API dan menggunakan memori.
+    Fungsi AI utama yang berkomunikasi dengan Groq API.
+    Versi ini TIDAK menggunakan memori jangka panjang untuk kompatibilitas deployment.
     """
     if not GROQ_API_KEY:
         yield "Maaf, fungsi AI tidak aktif karena kunci API Groq tidak dikonfigurasi."
@@ -114,17 +116,16 @@ def ask_ai(prompt: str):
 
     try:
         client = Groq(api_key=GROQ_API_KEY)
-        context = recall_memory(prompt)
         
+        # --- BAGIAN MEMORI DINONAKTIFKAN ---
+        # context = recall_memory(prompt) # <-- DIKOMENTARI
+        
+        # Prompt sekarang lebih sederhana, tanpa konteks memori
         full_prompt = [
             {
                 "role": "system",
                 "content": (
-                    "Anda adalah Friday, sebuah asisten AI yang cerdas, ramah, dan membantu. "
-                    "Gunakan informasi dari percakapan sebelumnya jika relevan.\n\n"
-                    "--- Konteks Percakapan Sebelumnya ---\n"
-                    f"{context}\n"
-                    "--- Akhir Konteks ---"
+                    "Anda adalah Friday, sebuah asisten AI yang cerdas, ramah, dan membantu."
                 )
             },
             {
@@ -133,8 +134,6 @@ def ask_ai(prompt: str):
             }
         ]
         
-        # --- PERUBAHAN UTAMA DI SINI ---
-        # Menggunakan model Llama 3 yang lebih besar dan aktif
         stream = client.chat.completions.create(
             messages=full_prompt,
             model="llama-3.1-8b-instant", 
@@ -145,7 +144,8 @@ def ask_ai(prompt: str):
             stop=None,
         )
         
-        save_memory("user", prompt)
+        # --- BAGIAN MEMORI DINONAKTIFKAN ---
+        # save_memory("user", prompt) # <-- DIKOMENTARI
         
         full_bot_response = ""
         for chunk in stream:
@@ -154,12 +154,14 @@ def ask_ai(prompt: str):
                 full_bot_response += chunk_text
                 yield chunk_text
         
-        if full_bot_response.strip():
-            save_memory("friday", full_bot_response.strip())
+        # --- BAGIAN MEMORI DINONAKTIFKAN ---
+        # if full_bot_response.strip():
+        #     save_memory("friday", full_bot_response.strip()) # <-- DIKOMENTARI
             
     except Exception as e:
         print(f"Terjadi kesalahan saat menghubungi Groq: {e}")
         yield f"Maaf, terjadi kesalahan internal saat memproses permintaan AI."
+
 
 
 # Face Recognition Settings
